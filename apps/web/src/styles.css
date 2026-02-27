@@ -1,0 +1,55 @@
+:root {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: #1f2937;
+  background: #f3f4f6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.container {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+h1 {
+  margin: 0 0 0.5rem;
+}
+
+p {
+  margin: 0.35rem 0;
+  line-height: 1.5;
+}
+
+.card {
+  margin-top: 1rem;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+code {
+  background: #f3f4f6;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+}
+
+.ok {
+  color: #166534;
+}
+
+.err {
+  color: #b91c1c;
+}
+
+ul {
+  margin: 0.5rem 0 0;
+}
+

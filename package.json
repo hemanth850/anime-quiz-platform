@@ -1,0 +1,16 @@
+{
+  "name": "anime-quiz-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace apps/api\" \"npm run dev --workspace apps/web\"",
+    "build": "npm run build --workspace apps/api && npm run build --workspace apps/web",
+    "lint": "npm run lint --workspace apps/api && npm run lint --workspace apps/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
