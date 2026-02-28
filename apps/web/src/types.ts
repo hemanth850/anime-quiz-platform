@@ -19,6 +19,8 @@ export type RoomState = {
     genre?: string;
     studio?: string;
     era?: Era;
+    mode: "casual" | "ranked";
+    seasonId?: string;
     questionCount: number;
     timePerQuestionSec: number;
   };
@@ -26,6 +28,7 @@ export type RoomState = {
   totalQuestions: number;
   question: Omit<Question, "answerIndex"> | null;
   remainingSeconds: number;
+  spectators: number;
 };
 
 export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";

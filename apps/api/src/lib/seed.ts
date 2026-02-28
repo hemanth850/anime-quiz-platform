@@ -51,6 +51,21 @@ const initialQuestions = [
 ];
 
 export async function ensureSeedData(): Promise<void> {
+  const activeSeason = await prisma.season.findFirst({
+    where: { isActive: true },
+  });
+
+  if (!activeSeason) {
+    await prisma.season.create({
+      data: {
+        code: "S1-2026",
+        name: "Season 1 2026",
+        startsAt: new Date("2026-01-01T00:00:00.000Z"),
+        isActive: true,
+      },
+    });
+  }
+
   const questionCount = await prisma.question.count();
   if (questionCount === 0) {
     await prisma.question.createMany({

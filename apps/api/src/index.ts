@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import cors from "cors";
 import express, { NextFunction, Request, Response } from "express";
 import { createServer } from "http";
-import { Difficulty, Era, MatchStatus, Role } from "@prisma/client";
+import { Difficulty, Era, MatchMode, MatchStatus, Role } from "@prisma/client";
 import { Server } from "socket.io";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
@@ -15,10 +15,12 @@ import {
   type AuthTokenPayload,
 } from "./lib/auth";
 import { prisma } from "./lib/prisma";
+import { calculateMultiPlayerElo } from "./lib/rating";
 import { ensureSeedData } from "./lib/seed";
 
 type EraInput = "90s" | "2000s" | "2010s" | "2020s";
 type DifficultyInput = "easy" | "medium" | "hard";
+type MatchModeInput = "casual" | "ranked";
 
 type Player = {
   id: string;
@@ -32,8 +34,10 @@ type RoomSettings = {
   genre?: string;
   studio?: string;
   era?: EraInput;
+  mode: MatchModeInput;
   questionCount: number;
   timePerQuestionSec: number;
+  seasonId?: string;
 };
 
 type RoomQuestion = {
@@ -56,6 +60,7 @@ type Room = {
   questions: RoomQuestion[];
   currentQuestionIndex: number;
   currentAnswers: Map<string, number>;
+  spectators: Set<string>;
   questionEndsAt?: number;
   timerHandle?: NodeJS.Timeout;
   startedAt?: Date;
@@ -70,6 +75,7 @@ const LEGACY_ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 
 const rooms = new Map<string, Room>();
 const socketToPlayer = new Map<string, { roomId: string; playerId: string }>();
+const socketToSpectator = new Map<string, { roomId: string }>();
 
 const app = express();
 app.use(cors({ origin: "*" }));
@@ -104,8 +110,10 @@ const quizFiltersInput = z.object({
   genre: z.string().optional(),
   studio: z.string().optional(),
   era: z.enum(["90s", "2000s", "2010s", "2020s"]).optional(),
+  mode: z.enum(["casual", "ranked"]).default("casual"),
   questionCount: z.number().int().min(3).max(20).default(5),
   timePerQuestionSec: z.number().int().min(5).max(60).default(15),
+  seasonId: z.string().uuid().optional(),
 });
 
 function toEra(input: EraInput): Era {
@@ -149,6 +157,14 @@ function toDifficulty(input: DifficultyInput): Difficulty {
     default:
       throw new Error("Invalid difficulty");
   }
+}
+
+function toMatchMode(input: MatchModeInput): MatchMode {
+  return input === "ranked" ? MatchMode.RANKED : MatchMode.CASUAL;
+}
+
+function fromMatchMode(mode: MatchMode): MatchModeInput {
+  return mode === MatchMode.RANKED ? "ranked" : "casual";
 }
 
 function fromDifficulty(difficulty: Difficulty): DifficultyInput {
@@ -228,6 +244,7 @@ function emitRoomState(io: Server, room: Room) {
     totalQuestions: room.questions.length,
     question: question ? sanitizeQuestion(question) : null,
     remainingSeconds,
+    spectators: room.spectators.size,
   });
 }
 
@@ -324,12 +341,106 @@ async function loadQuestionPool(settings: RoomSettings): Promise<RoomQuestion[]>
   return pool.map(toRoomQuestion);
 }
 
+async function getActiveSeason() {
+  return prisma.season.findFirst({
+    where: { isActive: true },
+    orderBy: { startsAt: "desc" },
+  });
+}
+
+async function applyRankedRatings(
+  seasonId: string,
+  leaderboard: Array<{ userId?: string; rank: number; score: number }>,
+) {
+  const validParticipants = leaderboard.filter((entry) => entry.userId) as Array<{
+    userId: string;
+    rank: number;
+    score: number;
+  }>;
+
+  if (validParticipants.length < 2) {
+    return new Map<string, { before: number; after: number; delta: number }>();
+  }
+
+  const ratings = await prisma.userSeasonRating.findMany({
+    where: {
+      seasonId,
+      userId: { in: validParticipants.map((entry) => entry.userId) },
+    },
+  });
+
+  const ratingMap = new Map(ratings.map((rating) => [rating.userId, rating]));
+  for (const participant of validParticipants) {
+    if (!ratingMap.has(participant.userId)) {
+      const created = await prisma.userSeasonRating.create({
+        data: {
+          seasonId,
+          userId: participant.userId,
+          rating: 1200,
+        },
+      });
+      ratingMap.set(participant.userId, created);
+    }
+  }
+
+  const eloResults = calculateMultiPlayerElo(
+    validParticipants.map((entry) => ({
+      userId: entry.userId,
+      rank: entry.rank,
+      rating: ratingMap.get(entry.userId)?.rating ?? 1200,
+    })),
+  );
+
+  await prisma.$transaction(
+    eloResults.map((result) =>
+      prisma.userSeasonRating.update({
+        where: {
+          userId_seasonId: {
+            userId: result.userId,
+            seasonId,
+          },
+        },
+        data: {
+          rating: result.after,
+          matches: { increment: 1 },
+          wins: {
+            increment: validParticipants.find((p) => p.userId === result.userId)?.rank === 1 ? 1 : 0,
+          },
+          losses: {
+            increment: validParticipants.find((p) => p.userId === result.userId)?.rank === validParticipants.length ? 1 : 0,
+          },
+          draws: {
+            increment:
+              validParticipants.find((p) => p.userId === result.userId)?.rank !== 1 &&
+              validParticipants.find((p) => p.userId === result.userId)?.rank !== validParticipants.length
+                ? 1
+                : 0,
+          },
+        },
+      }),
+    ),
+  );
+
+  return new Map(eloResults.map((result) => [result.userId, { before: result.before, after: result.after, delta: result.delta }]));
+}
+
 async function persistFinishedMatch(room: Room) {
   const leaderboard = getLeaderboard(room);
+  let seasonId: string | undefined = room.settings.seasonId;
+  if (room.settings.mode === "ranked" && !seasonId) {
+    const activeSeason = await getActiveSeason();
+    seasonId = activeSeason?.id;
+  }
+
+  const ratingUpdates =
+    room.settings.mode === "ranked" && seasonId
+      ? await applyRankedRatings(seasonId, leaderboard)
+      : new Map<string, { before: number; after: number; delta: number }>();
 
   await prisma.match.create({
     data: {
       roomCode: room.id,
+      mode: toMatchMode(room.settings.mode),
       genre: room.settings.genre,
       studio: room.settings.studio,
       era: room.settings.era ? toEra(room.settings.era) : undefined,
@@ -338,6 +449,7 @@ async function persistFinishedMatch(room: Room) {
       status: MatchStatus.FINISHED,
       startedAt: room.startedAt ?? new Date(),
       finishedAt: new Date(),
+      seasonId,
       participants: {
         create: leaderboard.map((entry) => ({
           userId: entry.userId,
@@ -345,6 +457,9 @@ async function persistFinishedMatch(room: Room) {
           score: entry.score,
           rank: entry.rank,
           connected: entry.connected,
+          ratingBefore: entry.userId ? ratingUpdates.get(entry.userId)?.before : null,
+          ratingAfter: entry.userId ? ratingUpdates.get(entry.userId)?.after : null,
+          ratingDelta: entry.userId ? ratingUpdates.get(entry.userId)?.delta : null,
         })),
       },
     },
@@ -561,10 +676,15 @@ app.get("/api/profile/me/matches", authRequired, async (req: AuthedRequest, res)
       score: p.score,
       rank: p.rank,
       connected: p.connected,
+      ratingBefore: p.ratingBefore,
+      ratingAfter: p.ratingAfter,
+      ratingDelta: p.ratingDelta,
       displayName: p.displayName,
       match: {
         id: p.match.id,
         roomCode: p.match.roomCode,
+        mode: fromMatchMode(p.match.mode),
+        seasonId: p.match.seasonId,
         genre: p.match.genre,
         studio: p.match.studio,
         era: p.match.era ? fromEra(p.match.era) : null,
@@ -675,6 +795,58 @@ app.get("/api/rankings", async (_req, res) => {
   res.json({ items });
 });
 
+app.get("/api/seasons/current", async (_req, res) => {
+  const season = await getActiveSeason();
+  if (!season) {
+    res.status(404).json({ message: "No active season configured" });
+    return;
+  }
+
+  res.json({
+    id: season.id,
+    code: season.code,
+    name: season.name,
+    startsAt: season.startsAt,
+    endsAt: season.endsAt,
+    isActive: season.isActive,
+  });
+});
+
+app.get("/api/leaderboards/ranked", async (req, res) => {
+  const seasonId = (req.query.seasonId as string | undefined) ?? (await getActiveSeason())?.id;
+  if (!seasonId) {
+    res.status(404).json({ message: "No season available" });
+    return;
+  }
+
+  const rows = await prisma.userSeasonRating.findMany({
+    where: { seasonId },
+    include: { user: true, season: true },
+    orderBy: [{ rating: "desc" }, { wins: "desc" }, { matches: "desc" }],
+    take: 100,
+  });
+
+  res.json({
+    season: rows[0]
+      ? {
+          id: rows[0].season.id,
+          code: rows[0].season.code,
+          name: rows[0].season.name,
+        }
+      : { id: seasonId },
+    items: rows.map((row, index) => ({
+      rank: index + 1,
+      userId: row.userId,
+      username: row.user.username,
+      rating: row.rating,
+      wins: row.wins,
+      losses: row.losses,
+      draws: row.draws,
+      matches: row.matches,
+    })),
+  });
+});
+
 app.post("/api/quizzes/single", async (req, res) => {
   const parsed = quizFiltersInput.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -714,6 +886,10 @@ io.on("connection", (socket) => {
         const playerId = uuidv4();
         const settings = quizFiltersInput.parse(payload.settings);
         const tokenUser = userFromAccessToken(payload.accessToken);
+        if (settings.mode === "ranked" && !tokenUser) {
+          ack?.({ ok: false, message: "Ranked rooms require authenticated users" });
+          return;
+        }
 
         const room: Room = {
           id: roomId,
@@ -732,6 +908,7 @@ io.on("connection", (socket) => {
           questions: [],
           currentQuestionIndex: 0,
           currentAnswers: new Map(),
+          spectators: new Set(),
         };
 
         rooms.set(roomId, room);
@@ -765,6 +942,10 @@ io.on("connection", (socket) => {
       }
 
       const tokenUser = userFromAccessToken(payload.accessToken);
+      if (room.settings.mode === "ranked" && !tokenUser) {
+        ack?.({ ok: false, message: "Ranked rooms require authenticated users" });
+        return;
+      }
       const playerId = uuidv4();
       room.players.push({
         id: playerId,
@@ -779,6 +960,26 @@ io.on("connection", (socket) => {
 
       emitRoomState(io, room);
       ack?.({ ok: true, roomId: room.id, playerId });
+    },
+  );
+
+  socket.on(
+    "room:spectate",
+    (
+      payload: { roomId: string },
+      ack?: (result: { ok: boolean; message?: string; roomId?: string; spectators?: number }) => void,
+    ) => {
+      const room = rooms.get(payload.roomId.toUpperCase());
+      if (!room) {
+        ack?.({ ok: false, message: "Room not found" });
+        return;
+      }
+
+      socket.join(room.id);
+      room.spectators.add(socket.id);
+      socketToSpectator.set(socket.id, { roomId: room.id });
+      emitRoomState(io, room);
+      ack?.({ ok: true, roomId: room.id, spectators: room.spectators.size });
     },
   );
 
@@ -859,6 +1060,16 @@ io.on("connection", (socket) => {
   );
 
   socket.on("disconnect", () => {
+    const spectatorMap = socketToSpectator.get(socket.id);
+    if (spectatorMap) {
+      const room = rooms.get(spectatorMap.roomId);
+      if (room) {
+        room.spectators.delete(socket.id);
+        emitRoomState(io, room);
+      }
+      socketToSpectator.delete(socket.id);
+    }
+
     const mapped = socketToPlayer.get(socket.id);
     if (!mapped) {
       return;
