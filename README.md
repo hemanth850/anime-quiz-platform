@@ -3,12 +3,14 @@
 Timed quizzes by genre/studio/era, multiplayer rooms, rankings, and an admin question bank.
 
 ## Current Status
-Phase 1 is implemented in this repository:
+Phase 2 foundation is now implemented:
 - Real-time multiplayer rooms with Socket.IO
 - Timed question rounds + score calculation
-- Quiz filtering by genre, studio, and era
-- Global rankings endpoint and UI
-- Admin panel to manage question bank (token protected)
+- Quiz filtering by genre, studio, and era (DB-backed)
+- Global rankings endpoint (persisted from finished matches)
+- JWT auth (register/login/refresh/me)
+- Role-based admin authorization for question bank
+- PostgreSQL + Prisma data models for users/questions/matches/tokens
 
 ## Architecture
 - `apps/api`: Express REST API + Socket.IO server
@@ -19,22 +21,40 @@ Phase 1 is implemented in this repository:
 ```bash
 npm install
 ```
-2. Start backend + frontend:
+2. Configure API env:
+```bash
+cp apps/api/.env.example apps/api/.env
+```
+3. Run Prisma migrations (requires running PostgreSQL):
+```bash
+npm run prisma:migrate --workspace apps/api
+```
+4. Start backend + frontend:
 ```bash
 npm run dev
 ```
-3. Open frontend:
+5. Open frontend:
 - `http://localhost:5173`
 
 Default API URL is `http://localhost:4000`.
 
-## Admin Access
-- Header/token key: `x-admin-token`
-- Default token: `dev-admin-token`
-- Override with env var in API process: `ADMIN_TOKEN`
+## Auth and Admin Access
+- Register/login APIs issue `accessToken` + `refreshToken`.
+- Admin actions require a bearer access token with role `ADMIN`.
+- A compatibility fallback header is still accepted: `x-admin-token` (if `ADMIN_TOKEN` is set).
+- Seeded admin can be configured with:
+  - `SEED_ADMIN_EMAIL`
+  - `SEED_ADMIN_USERNAME`
+  - `SEED_ADMIN_PASSWORD`
 
 ## Implemented API (Phase 1)
 - `GET /health`
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/refresh`
+- `GET /api/auth/me` (auth)
+- `GET /api/profile/me` (auth)
+- `GET /api/profile/me/matches` (auth)
 - `GET /api/questions`
 - `POST /api/questions` (admin)
 - `PUT /api/questions/:id` (admin)
@@ -60,9 +80,9 @@ Socket events:
 ### Phase 2
 - Auth (JWT + refresh), role-based admin
 - Persistent DB (PostgreSQL + Prisma)
-- Question import/export, tags, difficulty tuning
-- Match history and player profiles
+- Match history and player profile endpoints
 - Better anti-cheat validations and reconnect recovery
+- Question import/export and richer tagging (next)
 
 ### Phase 3
 - Ranked seasons, ELO/MMR, leaderboards by mode

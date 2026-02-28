@@ -1,0 +1,105 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PLAYER
+  ADMIN
+}
+
+enum Era {
+  ERA_90S
+  ERA_2000S
+  ERA_2010S
+  ERA_2020S
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum MatchStatus {
+  WAITING
+  ACTIVE
+  FINISHED
+}
+
+model User {
+  id             String             @id @default(uuid())
+  email          String             @unique
+  username       String             @unique
+  passwordHash   String
+  role           Role               @default(PLAYER)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  refreshTokens  RefreshToken[]
+  createdQuestions Question[]       @relation("QuestionCreator")
+  matchParticipants MatchParticipant[]
+}
+
+model RefreshToken {
+  id         String   @id @default(uuid())
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Question {
+  id          String      @id @default(uuid())
+  prompt      String
+  options     Json
+  answerIndex Int
+  genre       String
+  studio      String
+  era         Era
+  difficulty  Difficulty
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  createdById String?
+  createdBy   User?       @relation("QuestionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+}
+
+model Match {
+  id                 String             @id @default(uuid())
+  roomCode           String
+  genre              String?
+  studio             String?
+  era                Era?
+  questionCount      Int
+  timePerQuestionSec Int
+  status             MatchStatus        @default(FINISHED)
+  startedAt          DateTime           @default(now())
+  finishedAt         DateTime?
+  participants       MatchParticipant[]
+
+  @@index([startedAt])
+}
+
+model MatchParticipant {
+  id          String   @id @default(uuid())
+  matchId     String
+  userId      String?
+  displayName String
+  score       Int
+  rank        Int
+  connected   Boolean
+  createdAt   DateTime @default(now())
+
+  match       Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([matchId])
+  @@index([userId])
+}
