@@ -31,6 +31,11 @@ enum MatchStatus {
   FINISHED
 }
 
+enum MatchMode {
+  CASUAL
+  RANKED
+}
+
 model User {
   id             String             @id @default(uuid())
   email          String             @unique
@@ -42,6 +47,7 @@ model User {
   refreshTokens  RefreshToken[]
   createdQuestions Question[]       @relation("QuestionCreator")
   matchParticipants MatchParticipant[]
+  seasonRatings  UserSeasonRating[]
 }
 
 model RefreshToken {
@@ -74,6 +80,7 @@ model Question {
 model Match {
   id                 String             @id @default(uuid())
   roomCode           String
+  mode               MatchMode          @default(CASUAL)
   genre              String?
   studio             String?
   era                Era?
@@ -82,9 +89,12 @@ model Match {
   status             MatchStatus        @default(FINISHED)
   startedAt          DateTime           @default(now())
   finishedAt         DateTime?
+  seasonId           String?
+  season             Season?            @relation(fields: [seasonId], references: [id], onDelete: SetNull)
   participants       MatchParticipant[]
 
   @@index([startedAt])
+  @@index([seasonId])
 }
 
 model MatchParticipant {
@@ -95,6 +105,9 @@ model MatchParticipant {
   score       Int
   rank        Int
   connected   Boolean
+  ratingBefore Int?
+  ratingAfter  Int?
+  ratingDelta  Int?
   createdAt   DateTime @default(now())
 
   match       Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
@@ -102,4 +115,37 @@ model MatchParticipant {
 
   @@index([matchId])
   @@index([userId])
+}
+
+model Season {
+  id          String            @id @default(uuid())
+  code        String            @unique
+  name        String
+  startsAt    DateTime
+  endsAt      DateTime?
+  isActive    Boolean           @default(false)
+  createdAt   DateTime          @default(now())
+  matches     Match[]
+  userRatings UserSeasonRating[]
+
+  @@index([isActive])
+}
+
+model UserSeasonRating {
+  id          String   @id @default(uuid())
+  userId      String
+  seasonId    String
+  rating      Int      @default(1200)
+  wins        Int      @default(0)
+  losses      Int      @default(0)
+  draws       Int      @default(0)
+  matches     Int      @default(0)
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  season      Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, seasonId])
+  @@index([seasonId, rating])
 }

@@ -3,7 +3,7 @@
 Timed quizzes by genre/studio/era, multiplayer rooms, rankings, and an admin question bank.
 
 ## Current Status
-Phase 2 foundation is now implemented:
+Phase 3 foundation is now implemented:
 - Real-time multiplayer rooms with Socket.IO
 - Timed question rounds + score calculation
 - Quiz filtering by genre, studio, and era (DB-backed)
@@ -11,6 +11,9 @@ Phase 2 foundation is now implemented:
 - JWT auth (register/login/refresh/me)
 - Role-based admin authorization for question bank
 - PostgreSQL + Prisma data models for users/questions/matches/tokens
+- Ranked mode with season-based MMR updates
+- Ranked leaderboard endpoint
+- Spectator support in live rooms
 
 ## Architecture
 - `apps/api`: Express REST API + Socket.IO server
@@ -35,6 +38,10 @@ npm run dev
 ```
 5. Open frontend:
 - `http://localhost:5173`
+- UI tabs:
+  - `Auth`
+  - `Multiplayer`
+  - `Rankings`
 
 Default API URL is `http://localhost:4000`.
 
@@ -60,13 +67,22 @@ Default API URL is `http://localhost:4000`.
 - `PUT /api/questions/:id` (admin)
 - `DELETE /api/questions/:id` (admin)
 - `GET /api/rankings`
+- `GET /api/seasons/current`
+- `GET /api/leaderboards/ranked`
 - `POST /api/quizzes/single`
+
+## E2E Test
+Run API end-to-end test for auth + room lifecycle + rankings:
+```bash
+npm run test:e2e
+```
 
 Socket events:
 - `room:create`
 - `room:join`
 - `room:start`
 - `room:answer`
+- `room:spectate`
 - `room:state` (server emit)
 - `room:ended` (server emit)
 
@@ -77,14 +93,14 @@ Socket events:
 - Admin CRUD foundation
 - Rankings and base UI
 
-### Phase 2
+### Phase 2 (Completed)
 - Auth (JWT + refresh), role-based admin
 - Persistent DB (PostgreSQL + Prisma)
 - Match history and player profile endpoints
 - Better anti-cheat validations and reconnect recovery
 - Question import/export and richer tagging (next)
 
-### Phase 3
+### Phase 3 (In Progress)
 - Ranked seasons, ELO/MMR, leaderboards by mode
 - Tournament brackets and spectator mode
 - Observability (metrics/logging/traces)
@@ -98,4 +114,4 @@ Socket events:
 - `docs/SPRINT_01_PLAN.md`
 
 ## Notes
-This Phase 1 build is intentionally lean for fast iteration. It is complete enough for local end-to-end testing and incremental feature expansion in later phases.
+This build is intentionally lean for fast iteration. It is complete enough for local end-to-end testing and incremental feature expansion in later phases.
