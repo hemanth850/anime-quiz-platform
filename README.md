@@ -38,6 +38,10 @@ npm run dev
 ```
 5. Open frontend:
 - `http://localhost:5173`
+- UI tabs:
+  - `Auth`
+  - `Multiplayer`
+  - `Rankings`
 
 Default API URL is `http://localhost:4000`.
 
@@ -66,6 +70,12 @@ Default API URL is `http://localhost:4000`.
 - `GET /api/seasons/current`
 - `GET /api/leaderboards/ranked`
 - `POST /api/quizzes/single`
+
+## E2E Test
+Run API end-to-end test for auth + room lifecycle + rankings:
+```bash
+npm run test:e2e
+```
 
 Socket events:
 - `room:create`

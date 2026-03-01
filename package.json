@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "concurrently \"npm run dev --workspace apps/api\" \"npm run dev --workspace apps/web\"",
     "build": "npm run build --workspace apps/api && npm run build --workspace apps/web",
-    "lint": "npm run lint --workspace apps/api && npm run lint --workspace apps/web"
+    "lint": "npm run lint --workspace apps/api && npm run lint --workspace apps/web",
+    "test:e2e": "npm run build --workspace apps/api && npm run test:e2e --workspace apps/api"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
