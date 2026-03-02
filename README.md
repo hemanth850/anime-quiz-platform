@@ -47,7 +47,7 @@ npm run dev
   - `Multiplayer`
   - `Rankings`
 
-Default API URL is `http://localhost:4000`.
+Default API URL is `http://127.0.0.1:4500`.
 
 ## Auth and Admin Access
 - Register/login APIs issue `accessToken` + `refreshToken`.
@@ -88,7 +88,7 @@ Run lightweight API load smoke profile:
 npm run load:smoke
 ```
 Optional env vars:
-- `API_URL` (default: `http://localhost:4000`)
+- `API_URL` (default: `http://127.0.0.1:4500`)
 - `LOAD_DURATION_SEC` (default: `20`)
 - `LOAD_CONCURRENCY` (default: `20`)
 

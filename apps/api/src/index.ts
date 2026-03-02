@@ -72,7 +72,8 @@ type AuthedRequest = Request & {
   requestId?: string;
 };
 
-const PORT = Number(process.env.PORT ?? 4000);
+const PORT = Number(process.env.PORT ?? 4500);
+const HOST = process.env.HOST ?? "127.0.0.1";
 const LEGACY_ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 
 const rooms = new Map<string, Room>();
@@ -1185,8 +1186,8 @@ async function start() {
   await prisma.$connect();
   await ensureSeedData();
 
-  httpServer.listen(PORT, () => {
-    logEvent("info", "api_started", { port: PORT, url: `http://localhost:${PORT}` });
+  httpServer.listen(PORT, HOST, () => {
+    logEvent("info", "api_started", { host: HOST, port: PORT, url: `http://${HOST}:${PORT}` });
   });
 }
 
