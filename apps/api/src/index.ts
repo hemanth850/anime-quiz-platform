@@ -3,6 +3,7 @@ import cors from "cors";
 import express, { NextFunction, Request, Response } from "express";
 import { createServer } from "http";
 import { Difficulty, Era, MatchMode, MatchStatus, Role } from "@prisma/client";
+import client from "prom-client";
 import { Server } from "socket.io";
 import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
@@ -68,9 +69,11 @@ type Room = {
 
 type AuthedRequest = Request & {
   user?: AuthTokenPayload;
+  requestId?: string;
 };
 
-const PORT = Number(process.env.PORT ?? 4000);
+const PORT = Number(process.env.PORT ?? 4500);
+const HOST = process.env.HOST ?? "127.0.0.1";
 const LEGACY_ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 
 const rooms = new Map<string, Room>();
@@ -80,6 +83,78 @@ const socketToSpectator = new Map<string, { roomId: string }>();
 const app = express();
 app.use(cors({ origin: "*" }));
 app.use(express.json());
+
+const metricsRegistry = new client.Registry();
+client.collectDefaultMetrics({ register: metricsRegistry, prefix: "anime_quiz_" });
+
+const httpRequestsTotal = new client.Counter({
+  name: "anime_quiz_http_requests_total",
+  help: "Total number of HTTP requests",
+  labelNames: ["method", "route", "status"] as const,
+  registers: [metricsRegistry],
+});
+
+const httpRequestDurationMs = new client.Histogram({
+  name: "anime_quiz_http_request_duration_ms",
+  help: "HTTP request duration in milliseconds",
+  labelNames: ["method", "route", "status"] as const,
+  buckets: [5, 10, 20, 50, 100, 250, 500, 1000, 2000],
+  registers: [metricsRegistry],
+});
+
+const socketConnectedClients = new client.Gauge({
+  name: "anime_quiz_socket_connected_clients",
+  help: "Number of connected socket clients",
+  registers: [metricsRegistry],
+});
+
+const socketEventTotal = new client.Counter({
+  name: "anime_quiz_socket_events_total",
+  help: "Total socket events received by event name",
+  labelNames: ["event"] as const,
+  registers: [metricsRegistry],
+});
+
+function logEvent(level: "info" | "error", message: string, fields: Record<string, unknown> = {}) {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    level,
+    message,
+    ...fields,
+  };
+  // eslint-disable-next-line no-console
+  console[level](JSON.stringify(entry));
+}
+
+app.use((req: AuthedRequest, res, next) => {
+  const startNs = process.hrtime.bigint();
+  const requestId = req.header("x-request-id") ?? uuidv4();
+  req.requestId = requestId;
+  res.setHeader("x-request-id", requestId);
+
+  res.on("finish", () => {
+    const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1_000_000;
+    const route = req.route?.path ? String(req.route.path) : req.path;
+    const labels = {
+      method: req.method,
+      route,
+      status: String(res.statusCode),
+    };
+
+    httpRequestsTotal.inc(labels, 1);
+    httpRequestDurationMs.observe(labels, elapsedMs);
+
+    logEvent("info", "http_request", {
+      requestId,
+      method: req.method,
+      route,
+      statusCode: res.statusCode,
+      durationMs: Number(elapsedMs.toFixed(2)),
+    });
+  });
+
+  next();
+});
 
 const registerInput = z.object({
   email: z.string().email(),
@@ -508,6 +583,11 @@ app.get("/health", async (_req, res) => {
   res.json({ ok: true, timestamp: new Date().toISOString(), db: { userCount, questionCount } });
 });
 
+app.get("/metrics", async (_req, res) => {
+  res.setHeader("Content-Type", metricsRegistry.contentType);
+  res.send(await metricsRegistry.metrics());
+});
+
 app.post("/api/auth/register", async (req, res) => {
   const parsed = registerInput.safeParse(req.body);
   if (!parsed.success) {
@@ -875,12 +955,16 @@ const io = new Server(httpServer, {
 });
 
 io.on("connection", (socket) => {
+  socketConnectedClients.inc();
+  logEvent("info", "socket_connected", { socketId: socket.id });
+
   socket.on(
     "room:create",
     async (
       payload: { hostName: string; settings: RoomSettings; accessToken?: string },
       ack?: (result: { ok: boolean; message?: string; roomId?: string; playerId?: string }) => void,
     ) => {
+      socketEventTotal.inc({ event: "room:create" });
       try {
         const roomId = uuidv4().slice(0, 6).toUpperCase();
         const playerId = uuidv4();
@@ -930,6 +1014,7 @@ io.on("connection", (socket) => {
       payload: { roomId: string; playerName: string; accessToken?: string },
       ack?: (result: { ok: boolean; message?: string; roomId?: string; playerId?: string }) => void,
     ) => {
+      socketEventTotal.inc({ event: "room:join" });
       const room = rooms.get(payload.roomId.toUpperCase());
       if (!room) {
         ack?.({ ok: false, message: "Room not found" });
@@ -969,6 +1054,7 @@ io.on("connection", (socket) => {
       payload: { roomId: string },
       ack?: (result: { ok: boolean; message?: string; roomId?: string; spectators?: number }) => void,
     ) => {
+      socketEventTotal.inc({ event: "room:spectate" });
       const room = rooms.get(payload.roomId.toUpperCase());
       if (!room) {
         ack?.({ ok: false, message: "Room not found" });
@@ -986,6 +1072,7 @@ io.on("connection", (socket) => {
   socket.on(
     "room:start",
     async (payload: { roomId: string; playerId: string }, ack?: (result: { ok: boolean; message?: string }) => void) => {
+      socketEventTotal.inc({ event: "room:start" });
       const room = rooms.get(payload.roomId.toUpperCase());
       if (!room) {
         ack?.({ ok: false, message: "Room not found" });
@@ -1022,6 +1109,7 @@ io.on("connection", (socket) => {
       payload: { roomId: string; playerId: string; answerIndex: number },
       ack?: (result: { ok: boolean; correct?: boolean; points?: number; message?: string }) => void,
     ) => {
+      socketEventTotal.inc({ event: "room:answer" });
       const room = rooms.get(payload.roomId.toUpperCase());
       if (!room || room.status !== "active") {
         ack?.({ ok: false, message: "Room not active" });
@@ -1060,6 +1148,9 @@ io.on("connection", (socket) => {
   );
 
   socket.on("disconnect", () => {
+    socketConnectedClients.dec();
+    logEvent("info", "socket_disconnected", { socketId: socket.id });
+
     const spectatorMap = socketToSpectator.get(socket.id);
     if (spectatorMap) {
       const room = rooms.get(spectatorMap.roomId);
@@ -1095,14 +1186,14 @@ async function start() {
   await prisma.$connect();
   await ensureSeedData();
 
-  httpServer.listen(PORT, () => {
-    // eslint-disable-next-line no-console
-    console.log(`API running on http://localhost:${PORT}`);
+  httpServer.listen(PORT, HOST, () => {
+    logEvent("info", "api_started", { host: HOST, port: PORT, url: `http://${HOST}:${PORT}` });
   });
 }
 
 start().catch((error) => {
-  // eslint-disable-next-line no-console
-  console.error("Failed to start server", error);
+  logEvent("error", "api_start_failed", {
+    error: error instanceof Error ? error.message : String(error),
+  });
   process.exit(1);
 });
