@@ -3,7 +3,7 @@
 Timed quizzes by genre/studio/era, multiplayer rooms, rankings, and an admin question bank.
 
 ## Current Status
-Phase 3 foundation is now implemented:
+Phase 4 hardening is now implemented:
 - Real-time multiplayer rooms with Socket.IO
 - Timed question rounds + score calculation
 - Quiz filtering by genre, studio, and era (DB-backed)
@@ -14,6 +14,10 @@ Phase 3 foundation is now implemented:
 - Ranked mode with season-based MMR updates
 - Ranked leaderboard endpoint
 - Spectator support in live rooms
+- Request-level tracing (`x-request-id`) and structured logs
+- Prometheus metrics endpoint (`/metrics`)
+- CI workflow with PostgreSQL-backed build + e2e checks
+- Load smoke profile for API performance baselining
 
 ## Architecture
 - `apps/api`: Express REST API + Socket.IO server
@@ -70,12 +74,23 @@ Default API URL is `http://localhost:4000`.
 - `GET /api/seasons/current`
 - `GET /api/leaderboards/ranked`
 - `POST /api/quizzes/single`
+- `GET /metrics`
 
 ## E2E Test
 Run API end-to-end test for auth + room lifecycle + rankings:
 ```bash
 npm run test:e2e
 ```
+
+## Load Test
+Run lightweight API load smoke profile:
+```bash
+npm run load:smoke
+```
+Optional env vars:
+- `API_URL` (default: `http://localhost:4000`)
+- `LOAD_DURATION_SEC` (default: `20`)
+- `LOAD_CONCURRENCY` (default: `20`)
 
 Socket events:
 - `room:create`
@@ -100,11 +115,16 @@ Socket events:
 - Better anti-cheat validations and reconnect recovery
 - Question import/export and richer tagging (next)
 
-### Phase 3 (In Progress)
+### Phase 3 (Completed)
 - Ranked seasons, ELO/MMR, leaderboards by mode
 - Tournament brackets and spectator mode
 - Observability (metrics/logging/traces)
 - CI/CD, load testing, and autoscaling profile
+
+### Phase 4 (In Progress)
+- Tournament brackets
+- Advanced anti-cheat and answer telemetry
+- Autoscaling deployment profile and infra as code
 
 ## Planning Docs
 - `docs/V1_ROADMAP.md`
